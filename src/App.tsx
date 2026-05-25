@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Zap, SlidersHorizontal, Flag, Users, Palette, Eye, Code, Monitor, Smartphone, Sparkles,
-  MessageCircle, Clock, LayoutGrid, HelpCircle, Image as ImageIcon, Youtube, Phone, Copy, Check, Download
+  MessageCircle, Clock, LayoutGrid, HelpCircle, Image as ImageIcon, Youtube, Phone, Copy, Check, Download,
+  Bot, Wifi, WifiOff, RefreshCw
 } from 'lucide-react';
 
 // ============================================================
@@ -228,6 +229,14 @@ export default function App() {
   const iframeRef = useRef(null);
   const fileInputRef = useRef(null);
 
+  // — Ollama AI state —
+  const [useOllama, setUseOllama] = useState(false);
+  const [ollamaModel, setOllamaModel] = useState('llama3.2');
+  const [ollamaStatus, setOllamaStatus] = useState<'unknown' | 'online' | 'offline'>('unknown');
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [aiContent, setAiContent] = useState<Record<string, any> | null>(null);
+  const [ollamaError, setOllamaError] = useState('');
+
   const [formData, setFormData] = useState({
     jenisHalaman: 'Landing Page',
     strategiCopy: 'AIDA Framework',
@@ -261,6 +270,74 @@ export default function App() {
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+    setAiContent(null); // reset AI content saat input berubah
+    setOllamaError('');
+  };
+
+  // — Ollama: cek koneksi & list model —
+  const checkOllama = async () => {
+    setOllamaStatus('unknown');
+    try {
+      const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(4000) });
+      if (!res.ok) { setOllamaStatus('offline'); return; }
+      const data = await res.json();
+      const models: string[] = (data.models || []).map((m: any) => m.name);
+      setAvailableModels(models);
+      setOllamaStatus('online');
+      if (models.length > 0 && !models.includes(ollamaModel)) setOllamaModel(models[0]);
+    } catch {
+      setOllamaStatus('offline');
+    }
+  };
+
+  useEffect(() => {
+    if (useOllama) checkOllama();
+  }, [useOllama]); // eslint-disable-line
+
+  // — Ollama: generate copy via local LLM —
+  const generateWithOllama = async (): Promise<Record<string, any>> => {
+    const { namaProduk, deskripsi, targetAudiens, tujuan, strategiCopy, nuansaDesain } = formData;
+    const prompt = `Kamu adalah copywriter profesional Indonesia spesialis landing page marketing.
+
+Data produk:
+- Nama Produk: ${namaProduk || 'Produk'}
+- Deskripsi: ${deskripsi || '-'}
+- Target Audiens: ${targetAudiens || 'umum'}
+- Tujuan: ${tujuan || 'penjualan'}
+- Framework: ${strategiCopy}
+- Nuansa: ${nuansaDesain}
+
+Tugas: Buat copy landing page yang compelling, natural, dan persuasif dalam Bahasa Indonesia.
+
+Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsung JSON):
+{
+  "eyebrow": "teks badge singkat di atas headline, max 8 kata, HURUF BESAR",
+  "headline": "headline utama yang powerful, bisa pakai angka atau pertanyaan",
+  "subHeadline": "2-3 kalimat sub-headline yang meyakinkan dan spesifik",
+  "featureTitles": ["judul fitur 1", "judul fitur 2", "judul fitur 3"],
+  "featureDescs": ["deskripsi fitur 1 (2 kalimat)", "deskripsi fitur 2 (2 kalimat)", "deskripsi fitur 3 (2 kalimat)"],
+  "middleTitle": "judul section tengah yang menggugah emosi",
+  "middleBody": "2-3 kalimat yang menjelaskan masalah atau desire audiens secara spesifik",
+  "ctaTitle": "judul CTA bagian bawah yang urgent",
+  "ctaSub": "1-2 kalimat pendukung CTA yang mengurangi keraguan",
+  "testiTexts": ["testimoni 1 natural 2-3 kalimat", "testimoni 2", "testimoni 3"],
+  "faqAnswers": ["jawaban FAQ 1 yang meyakinkan", "jawaban FAQ 2", "jawaban FAQ 3", "jawaban FAQ 4"]
+}`;
+
+    const res = await fetch('http://localhost:11434/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: ollamaModel, prompt, stream: false, options: { temperature: 0.75, num_predict: 1200 } }),
+      signal: AbortSignal.timeout(120000),
+    });
+    if (!res.ok) throw new Error(`Ollama error ${res.status}: ${await res.text()}`);
+    const data = await res.json();
+
+    // Ekstrak JSON dari response (model kadang menambah teks sebelum/sesudah)
+    const raw: string = data.response || '';
+    const match = raw.match(/\{[\s\S]*\}/);
+    if (!match) throw new Error('Model tidak mengembalikan JSON yang valid. Coba model lain atau ulangi.');
+    return JSON.parse(match[0]);
   };
 
   const handleImageUpload = (e) => {
@@ -299,10 +376,13 @@ export default function App() {
     const isJual = tujuanLow.includes('jual') || tujuanLow.includes('beli') || tujuanLow.includes('order');
     const isLead = tujuanLow.includes('lead') || tujuanLow.includes('wa') || tujuanLow.includes('konsultasi');
 
-    // — Intelligence Engine —
+    // — Intelligence Engine (template fallback) —
     const parsed = parseDescription(deskripsi, produk, audiensPendek);
     const headlines = buildHeadlines(formData.strategiCopy, produk, audiensPendek, tujuan, theme.gradient, parsed);
-    const heroSubHeadline = synthesizeHeroSubHeadline(produk, audiensPendek, tujuan, deskripsi, parsed);
+    const heroSubHeadline = aiContent?.subHeadline || synthesizeHeroSubHeadline(produk, audiensPendek, tujuan, deskripsi, parsed);
+
+    // AI overrides untuk headline & eyebrow
+    const ai = aiContent; // shorthand
 
     // — Design Variables —
     const isElegant = formData.nuansaDesain === 'Elegan & Mewah';
@@ -372,42 +452,66 @@ export default function App() {
     };
 
     // — Eyebrow —
-    const eyebrowHTML = headlines.eyebrowType === 'warning'
-      ? `<span class="inline-block py-1.5 px-5 bg-red-100 text-red-700 text-xs font-bold tracking-widest ${roundedClass} mb-5 md:mb-7 uppercase border border-red-200 shadow-sm animate-pulse">${headlines.eyebrow}</span>`
+    const eyebrowText = ai?.eyebrow || headlines.eyebrow;
+    const eyebrowType = ai ? 'positive' : headlines.eyebrowType;
+    const eyebrowHTML = eyebrowType === 'warning'
+      ? `<span class="inline-block py-1.5 px-5 bg-red-100 text-red-700 text-xs font-bold tracking-widest ${roundedClass} mb-5 md:mb-7 uppercase border border-red-200 shadow-sm animate-pulse">${eyebrowText}</span>`
       : isPlayful
-        ? `<span class="section-label">${headlines.eyebrow}</span>`
-        : `<span class="inline-block py-1.5 px-5 ${theme.primary} text-white text-xs font-bold tracking-widest ${roundedClass} mb-5 md:mb-7 uppercase shadow-sm">${headlines.eyebrow}</span>`;
+        ? `<span class="section-label">${eyebrowText}</span>`
+        : `<span class="inline-block py-1.5 px-5 ${theme.primary} text-white text-xs font-bold tracking-widest ${roundedClass} mb-5 md:mb-7 uppercase shadow-sm">${eyebrowText}</span>`;
 
     // — Middle Strategy Section —
+    // Elegant = always dark bg regardless of theme.soft (which is light)
+    const middlePasBg = isElegant ? 'bg-[#160808] border-y border-red-900/40' : 'bg-red-50/60 border-y border-red-100';
+    const middleAidaBg = isElegant ? 'bg-[#0d0d0d] border-y border-gray-800/60' : theme.soft;
+    const midTitle = ai?.middleTitle || headlines.middleTitle;
+    const midBody = ai?.middleBody || headlines.middleBody;
     const middleStrategyHTML = formData.strategiCopy === 'PAS Framework' ? `
-      <section class="py-16 md:py-24 px-5 md:px-8 bg-red-50/60 border-y border-red-100">
+      <section class="py-16 md:py-24 px-5 md:px-8 ${middlePasBg}">
         <div class="max-w-3xl mx-auto text-center">
           ${isPlayful ? '<span class="section-label">PERHATIAN</span>' : ''}
-          <h2 class="text-2xl md:text-4xl font-bold ${isElegant ? 'text-white' : 'text-gray-900'} mb-4 md:mb-6">${headlines.middleTitle}</h2>
+          <h2 class="text-2xl md:text-4xl font-bold ${isElegant ? 'text-white' : 'text-gray-900'} mb-4 md:mb-6">${midTitle}</h2>
           ${isElegant ? '<span class="elegant-line"></span>' : ''}
-          <p class="text-base md:text-lg ${isElegant ? 'text-gray-300' : 'text-gray-600'} mt-6 md:mt-8 leading-relaxed">${headlines.middleBody}</p>
-          <div class="mt-6 md:mt-8 text-lg md:text-xl font-semibold ${theme.text} italic">"Saatnya beralih ke cara yang tepat."</div>
+          <p class="text-base md:text-lg ${isElegant ? 'text-gray-300' : 'text-gray-600'} mt-6 md:mt-8 leading-relaxed">${midBody}</p>
+          <div class="mt-6 md:mt-8 text-lg md:text-xl font-semibold ${isElegant ? 'text-red-400' : theme.text} italic">"Saatnya beralih ke cara yang tepat."</div>
         </div>
       </section>` : `
-      <section class="py-16 md:py-24 px-5 md:px-8 ${theme.soft}">
+      <section class="py-16 md:py-24 px-5 md:px-8 ${middleAidaBg}">
         <div class="max-w-3xl mx-auto text-center">
           ${isPlayful ? '<span class="section-label">MENGAPA INI PENTING</span>' : ''}
-          <h2 class="text-2xl md:text-4xl font-bold ${isElegant ? 'text-white' : 'text-gray-900'} mb-4 md:mb-6">${headlines.middleTitle}</h2>
+          <h2 class="text-2xl md:text-4xl font-bold ${isElegant ? 'text-white' : 'text-gray-900'} mb-4 md:mb-6">${midTitle}</h2>
           ${isElegant ? '<span class="elegant-line"></span>' : ''}
-          <p class="text-base md:text-lg ${isElegant ? 'text-gray-300' : 'text-gray-700'} mt-6 md:mt-8 leading-relaxed">${headlines.middleBody}</p>
+          <p class="text-base md:text-lg ${isElegant ? 'text-gray-300' : 'text-gray-700'} mt-6 md:mt-8 leading-relaxed">${midBody}</p>
           <div class="w-12 h-1 ${theme.primary} mx-auto mt-8 md:mt-10"></div>
         </div>
       </section>`;
 
+    // — Order URL sanitizer (auto-prefix https, support WA number) —
+    const orderUrl = (() => {
+      const raw = formData.orderLink.trim();
+      if (!raw) return '#';
+      if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
+      if (raw.startsWith('wa.me/') || raw.startsWith('whatsapp://')) return `https://${raw}`;
+      // bare phone number → WA link (normalize 08xx → 628xx)
+      const digitsOnly = raw.replace(/\D/g, '');
+      if (digitsOnly.length >= 9) {
+        const normalized = digitsOnly.startsWith('0') ? `62${digitsOnly.slice(1)}` : digitsOnly;
+        return `https://wa.me/${normalized}`;
+      }
+      return `https://${raw}`;
+    })();
+
     // — CTA Config —
-    let ctaTitle = `Waktunya Ambil Langkah, ${audiensPendek}`;
-    let ctaSub = `Ribuan ${audiensPendek} sudah memulai. Jangan biarkan mereka semakin jauh meninggalkan Anda.`;
-    if (isJual) {
-      ctaTitle = `Miliki ${produk} Sekarang!`;
-      ctaSub = 'Stok penawaran sangat terbatas — amankan posisi Anda sebelum kehabisan dan harga kembali normal.';
-    } else if (isLead) {
-      ctaTitle = `Konsultasi Gratis Bersama Tim ${produk}`;
-      ctaSub = `Sesi eksklusif untuk ${audiensPendek} — kami dengarkan kebutuhan Anda dan berikan solusi yang tepat sasaran.`;
+    let ctaTitle = ai?.ctaTitle || `Waktunya Ambil Langkah, ${audiensPendek}`;
+    let ctaSub = ai?.ctaSub || `Ribuan ${audiensPendek} sudah memulai. Jangan biarkan mereka semakin jauh meninggalkan Anda.`;
+    if (!ai) {
+      if (isJual) {
+        ctaTitle = `Miliki ${produk} Sekarang!`;
+        ctaSub = 'Stok penawaran sangat terbatas — amankan posisi Anda sebelum kehabisan dan harga kembali normal.';
+      } else if (isLead) {
+        ctaTitle = `Konsultasi Gratis Bersama Tim ${produk}`;
+        ctaSub = `Sesi eksklusif untuk ${audiensPendek} — kami dengarkan kebutuhan Anda dan berikan solusi yang tepat sasaran.`;
+      }
     }
 
     // — Trust Indicators (hero area) —
@@ -473,18 +577,18 @@ export default function App() {
         <div class="w-12 h-12 md:w-14 md:h-14 ${theme.light} ${theme.text} ${roundedClass} flex items-center justify-center mb-5 md:mb-6">
           ${featureIcons[i]}
         </div>
-        <h3 class="font-bold text-base md:text-lg mb-2 md:mb-3 ${isElegant ? 'text-white' : 'text-gray-800'}">${getFeatureTitle(feat, i)}</h3>
-        <p class="${isElegant ? 'text-gray-400' : 'text-gray-600'} leading-relaxed text-sm md:text-base">${formatCopy(expandFeatureDescription(feat, produk, audiensPendek, i))}</p>
+        <h3 class="font-bold text-base md:text-lg mb-2 md:mb-3 ${isElegant ? 'text-white' : 'text-gray-800'}">${ai?.featureTitles?.[i] || getFeatureTitle(feat, i)}</h3>
+        <p class="${isElegant ? 'text-gray-400' : 'text-gray-600'} leading-relaxed text-sm md:text-base">${formatCopy(ai?.featureDescs?.[i] || expandFeatureDescription(feat, produk, audiensPendek, i))}</p>
       </div>
     `).join('');
 
     // — Testimonials —
     const testiItems = buildContextualTesti(produk, audiensPendek, tujuan);
-    const testiCardsHTML = testiItems.map(t => `
+    const testiCardsHTML = testiItems.map((t, idx) => `
       <div class="${highlightCardClass} text-left relative">
         <div class="text-5xl text-gray-200 opacity-30 absolute top-4 right-6 font-serif leading-none">"</div>
         <div class="flex text-yellow-400 mb-4 text-base md:text-lg">★★★★★</div>
-        <p class="mb-6 md:mb-8 relative z-10 leading-relaxed text-sm md:text-base ${isElegant ? 'text-gray-300' : 'text-gray-700'}">"${t.text}"</p>
+        <p class="mb-6 md:mb-8 relative z-10 leading-relaxed text-sm md:text-base ${isElegant ? 'text-gray-300' : 'text-gray-700'}">"${ai?.testiTexts?.[idx] || t.text}"</p>
         <div class="flex items-center border-t ${isElegant ? 'border-gray-800' : 'border-gray-100'} pt-4 md:pt-5">
           <div class="w-11 h-11 rounded-full mr-3 md:mr-4 overflow-hidden border-2 ${theme.border} shrink-0">
             <img src="https://i.pravatar.cc/100?img=${t.img}" class="w-full h-full object-cover" loading="lazy" />
@@ -499,7 +603,7 @@ export default function App() {
 
     // — FAQ —
     const faqItems = buildContextualFAQ(produk, audiensPendek, tujuan, deskripsi);
-    const faqHTML = faqItems.map(f => `
+    const faqHTML = faqItems.map((f, idx) => `
       <details class="group ${isElegant ? 'bg-[#161616] border-gray-800' : 'bg-gray-50 border-gray-200'} border ${roundedClass} shadow-sm overflow-hidden">
         <summary class="flex justify-between items-center font-semibold cursor-pointer list-none p-5 md:p-6 ${isElegant ? 'text-gray-200 hover:text-white' : 'text-gray-800 hover:text-gray-900'} transition-colors text-sm md:text-base">
           <span class="pr-4">${f.q}</span>
@@ -508,7 +612,7 @@ export default function App() {
           </span>
         </summary>
         <div class="px-5 md:px-6 pb-5 md:pb-6 border-t ${isElegant ? 'border-gray-800' : 'border-gray-100'}">
-          <p class="pt-4 leading-relaxed text-sm md:text-base ${isElegant ? 'text-gray-400' : 'text-gray-600'}">${f.a}</p>
+          <p class="pt-4 leading-relaxed text-sm md:text-base ${isElegant ? 'text-gray-400' : 'text-gray-600'}">${ai?.faqAnswers?.[idx] || f.a}</p>
         </div>
       </details>
     `).join('');
@@ -547,14 +651,14 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
     <div class="max-w-4xl mx-auto text-center relative z-10">
       ${eyebrowHTML}
       <h1 class="text-3xl md:text-5xl lg:text-[3.75rem] ${isElegant ? 'font-bold' : 'font-black'} leading-[1.12] mb-4 md:mb-6 tracking-tight ${isElegant ? 'text-white' : ''}">
-        ${headlines.headline}
+        ${ai?.headline ? `<span class="text-transparent bg-clip-text bg-gradient-to-r ${theme.gradient} leading-tight">${ai.headline}</span>` : headlines.headline}
       </h1>
       <p class="text-base md:text-xl ${isElegant ? 'text-gray-400' : 'text-gray-600'} mb-0 max-w-2xl md:max-w-3xl mx-auto leading-relaxed">
         ${formatCopy(heroSubHeadline)}
       </p>
       ${heroMedia}
       <div class="flex flex-col sm:flex-row justify-center items-center gap-4 mt-8 md:mt-12 relative z-20">
-        <a href="${formData.orderLink || '#'}" class="${btnClass} py-4 md:py-5 px-8 md:px-12 text-base md:text-lg w-full sm:w-auto inline-flex items-center justify-center text-center">
+        <a href="${orderUrl}" class="${btnClass} py-4 md:py-5 px-8 md:px-12 text-base md:text-lg w-full sm:w-auto inline-flex items-center justify-center text-center">
           ${formData.teksCTA || 'Ambil Penawaran Ini'}
           ${!isElegant ? `<svg class="w-5 h-5 ml-2 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>` : ''}
         </a>
@@ -657,7 +761,7 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
         <p class="text-xs mt-2 ${isElegant ? 'text-gray-600' : 'text-gray-400'}">Harga spesial hanya melalui halaman ini</p>
       </div>
       ` : ''}
-      <a href="${formData.orderLink || '#'}" class="${btnClass} py-4 md:py-5 px-8 md:px-12 text-lg md:text-xl w-full block text-center">
+      <a href="${orderUrl}" class="${btnClass} py-4 md:py-5 px-8 md:px-12 text-lg md:text-xl w-full block text-center">
         ${formData.teksCTA || 'Ambil Penawaran Sekarang'}
       </a>
       <p class="text-xs md:text-sm mt-6 md:mt-8 flex items-center justify-center gap-1.5 font-medium ${isElegant ? 'text-gray-600' : 'text-gray-400'}">
@@ -698,13 +802,31 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
 </html>`;
   };
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     setIsLoading(true);
-    setTimeout(() => {
+    setOllamaError('');
+
+    if (useOllama) {
+      try {
+        const ai = await generateWithOllama();
+        setAiContent(ai);
+      } catch (err: any) {
+        setOllamaError(err.message || 'Gagal menghubungi Ollama.');
+        setIsLoading(false);
+        return;
+      }
       setIsLoading(false);
       setIsGenerated(true);
       setActiveTab('pratinjau');
-    }, 2000);
+    } else {
+      // template-based (no AI)
+      setAiContent(null);
+      setTimeout(() => {
+        setIsLoading(false);
+        setIsGenerated(true);
+        setActiveTab('pratinjau');
+      }, 1200);
+    }
   };
 
   const copyToClipboard = () => {
@@ -950,14 +1072,88 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
             </div>
           </section>
 
+          {/* OLLAMA AI SECTION */}
+          <section className="pb-4">
+            <div className="flex items-center text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">
+              <Bot size={14} className="mr-2" />
+              AI Lokal (Ollama)
+            </div>
+
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+              {/* Toggle row */}
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-[13px] font-bold text-gray-700">Aktifkan Ollama</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">Generate copy via LLM lokal</div>
+                </div>
+                <button
+                  onClick={() => setUseOllama(v => !v)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ${useOllama ? 'bg-blue-600' : 'bg-gray-300'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${useOllama ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              {useOllama && (
+                <>
+                  {/* Status row */}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-[12px] font-semibold">
+                      {ollamaStatus === 'online' && <><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /><span className="text-emerald-600">Online</span></>}
+                      {ollamaStatus === 'offline' && <><span className="w-2 h-2 rounded-full bg-red-500" /><span className="text-red-500">Offline</span></>}
+                      {ollamaStatus === 'unknown' && <><span className="w-2 h-2 rounded-full bg-gray-300 animate-pulse" /><span className="text-gray-400">Memeriksa...</span></>}
+                    </div>
+                    <button onClick={checkOllama} className="flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-blue-600 transition-colors">
+                      <RefreshCw size={12} /> Refresh
+                    </button>
+                  </div>
+
+                  {/* Model selector */}
+                  {availableModels.length > 0 ? (
+                    <div>
+                      <label className="block text-[10px] font-semibold text-gray-500 mb-1">Model</label>
+                      <select
+                        value={ollamaModel}
+                        onChange={e => setOllamaModel(e.target.value)}
+                        className="w-full bg-white border border-gray-200 text-gray-700 text-xs rounded-md px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-blue-600 appearance-none"
+                      >
+                        {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                      </select>
+                    </div>
+                  ) : ollamaStatus === 'online' ? (
+                    <div className="text-[11px] text-gray-400">Tidak ada model ditemukan. Pull model dulu: <span className="font-mono text-gray-600">ollama pull llama3.2</span></div>
+                  ) : (
+                    <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
+                      <WifiOff size={11} /> Pastikan Ollama berjalan di <span className="font-mono">localhost:11434</span>
+                    </div>
+                  )}
+
+                  {/* Error message */}
+                  {ollamaError && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-[11px] text-red-600 font-medium leading-relaxed">
+                      {ollamaError}
+                    </div>
+                  )}
+
+                  {/* AI active badge */}
+                  {aiContent && (
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-[11px] text-emerald-700 font-semibold flex items-center gap-1.5">
+                      <Wifi size={11} /> Copy dihasilkan oleh {ollamaModel}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+
         </div>
 
         <div className="p-5 border-t border-gray-100 bg-white shrink-0">
           <button onClick={handleGenerate} disabled={isLoading} className={`w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/30 transition-all ${isLoading ? 'opacity-80 cursor-not-allowed' : 'active:scale-[0.98]'}`}>
             {isLoading ? (
-              <><svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>MERAKIT HALAMAN...</>
+              <><svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>{useOllama ? `AI GENERATING (${ollamaModel})...` : 'MERAKIT HALAMAN...'}</>
             ) : (
-              <><Sparkles size={18} className="mr-2" />GENERATE LANDING PAGE</>
+              <><Sparkles size={18} className="mr-2" />{useOllama ? 'GENERATE dengan AI' : 'GENERATE LANDING PAGE'}</>
             )}
           </button>
         </div>
