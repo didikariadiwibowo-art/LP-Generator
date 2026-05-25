@@ -218,7 +218,7 @@ function buildContextualTesti(produk: string, audiens: string, tujuan: string) {
 // ============================================================
 // GEMINI API KEY — ganti dengan key kamu
 // ============================================================
-const GEMINI_API_KEY = 'AIzaSyBvPgxz4YeNDTRr7KPIIX4cvrBWjieTT_Y';
+const GEMINI_API_KEY = 'AIzaSyCW14lvzYI6_y7WO8eRipXuSuN0QTGOUhg';
 
 // ============================================================
 // WA GREETING GENERATOR
@@ -322,7 +322,7 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
   "waGreeting": "pesan WA pembuka yang natural, friendly, dan relevan dengan produk, max 2 kalimat, boleh pakai emoji"` : ''}
 }`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GEMINI_API_KEY}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
