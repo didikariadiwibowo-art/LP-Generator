@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   Zap, SlidersHorizontal, Flag, Users, Palette, Eye, Code, Monitor, Smartphone, Sparkles,
   MessageCircle, Clock, LayoutGrid, HelpCircle, Image as ImageIcon, Youtube, Phone, Copy, Check, Download,
-  Bot, Wifi, WifiOff, RefreshCw
+  Bot
 } from 'lucide-react';
 
 // ============================================================
@@ -216,6 +216,23 @@ function buildContextualTesti(produk: string, audiens: string, tujuan: string) {
 }
 
 // ============================================================
+// GEMINI API KEY — ganti dengan key kamu
+// ============================================================
+const GEMINI_API_KEY = 'AIzaSyBvPgxz4YeNDTRr7KPIIX4cvrBWjieTT_Y';
+
+// ============================================================
+// WA GREETING GENERATOR
+// ============================================================
+function buildWAGreeting(produk: string, audiens: string, tujuan: string): string {
+  const low = tujuan.toLowerCase();
+  const isJual = low.includes('jual') || low.includes('beli') || low.includes('order');
+  const isLead = low.includes('konsultasi') || low.includes('lead') || low.includes('daftar');
+  if (isJual) return `Halo kak, saya tertarik dengan *${produk}* yang ada di halaman ini. Apakah masih tersedia? Boleh minta info lebih lanjut? 🙏`;
+  if (isLead) return `Halo, saya ingin konsultasi lebih lanjut mengenai *${produk}*. Apakah bisa dijadwalkan waktunya? Terima kasih 😊`;
+  return `Halo, saya ingin tahu lebih lanjut tentang *${produk}*. Bisa tolong bantu saya? 🙏`;
+}
+
+// ============================================================
 // APP COMPONENT
 // ============================================================
 
@@ -229,13 +246,10 @@ export default function App() {
   const iframeRef = useRef(null);
   const fileInputRef = useRef(null);
 
-  // — Ollama AI state —
-  const [useOllama, setUseOllama] = useState(false);
-  const [ollamaModel, setOllamaModel] = useState('llama3.2');
-  const [ollamaStatus, setOllamaStatus] = useState<'unknown' | 'online' | 'offline'>('unknown');
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  // — Gemini AI state —
+  const [useGemini, setUseGemini] = useState(false);
   const [aiContent, setAiContent] = useState<Record<string, any> | null>(null);
-  const [ollamaError, setOllamaError] = useState('');
+  const [geminiError, setGeminiError] = useState('');
 
   const [formData, setFormData] = useState({
     jenisHalaman: 'Landing Page',
@@ -247,6 +261,9 @@ export default function App() {
     nuansaDesain: 'Modern & Minimalis',
     teksCTA: '',
     harga: '',
+    orderType: 'wa' as 'wa' | 'link',
+    orderWA: '',
+    waGreeting: '',
     orderLink: '',
     temaWarna: 'ocean',
     useFloatingWA: false,
@@ -270,33 +287,13 @@ export default function App() {
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
-    setAiContent(null); // reset AI content saat input berubah
-    setOllamaError('');
+    setAiContent(null);
+    setGeminiError('');
   };
 
-  // — Ollama: cek koneksi & list model —
-  const checkOllama = async () => {
-    setOllamaStatus('unknown');
-    try {
-      const res = await fetch('http://localhost:11434/api/tags', { signal: AbortSignal.timeout(4000) });
-      if (!res.ok) { setOllamaStatus('offline'); return; }
-      const data = await res.json();
-      const models: string[] = (data.models || []).map((m: any) => m.name);
-      setAvailableModels(models);
-      setOllamaStatus('online');
-      if (models.length > 0 && !models.includes(ollamaModel)) setOllamaModel(models[0]);
-    } catch {
-      setOllamaStatus('offline');
-    }
-  };
-
-  useEffect(() => {
-    if (useOllama) checkOllama();
-  }, [useOllama]); // eslint-disable-line
-
-  // — Ollama: generate copy via local LLM —
-  const generateWithOllama = async (): Promise<Record<string, any>> => {
-    const { namaProduk, deskripsi, targetAudiens, tujuan, strategiCopy, nuansaDesain } = formData;
+  // — Gemini: generate copy via Google AI —
+  const generateWithGemini = async (): Promise<Record<string, any>> => {
+    const { namaProduk, deskripsi, targetAudiens, tujuan, strategiCopy, nuansaDesain, orderType } = formData;
     const prompt = `Kamu adalah copywriter profesional Indonesia spesialis landing page marketing.
 
 Data produk:
@@ -312,7 +309,7 @@ Tugas: Buat copy landing page yang compelling, natural, dan persuasif dalam Baha
 Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsung JSON):
 {
   "eyebrow": "teks badge singkat di atas headline, max 8 kata, HURUF BESAR",
-  "headline": "headline utama yang powerful, bisa pakai angka atau pertanyaan",
+  "headline": "headline utama yang powerful, bisa pakai angka atau pertanyaan, max 12 kata",
   "subHeadline": "2-3 kalimat sub-headline yang meyakinkan dan spesifik",
   "featureTitles": ["judul fitur 1", "judul fitur 2", "judul fitur 3"],
   "featureDescs": ["deskripsi fitur 1 (2 kalimat)", "deskripsi fitur 2 (2 kalimat)", "deskripsi fitur 3 (2 kalimat)"],
@@ -321,22 +318,30 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
   "ctaTitle": "judul CTA bagian bawah yang urgent",
   "ctaSub": "1-2 kalimat pendukung CTA yang mengurangi keraguan",
   "testiTexts": ["testimoni 1 natural 2-3 kalimat", "testimoni 2", "testimoni 3"],
-  "faqAnswers": ["jawaban FAQ 1 yang meyakinkan", "jawaban FAQ 2", "jawaban FAQ 3", "jawaban FAQ 4"]
+  "faqAnswers": ["jawaban FAQ 1 yang meyakinkan", "jawaban FAQ 2", "jawaban FAQ 3", "jawaban FAQ 4"]${orderType === 'wa' ? `,
+  "waGreeting": "pesan WA pembuka yang natural, friendly, dan relevan dengan produk, max 2 kalimat, boleh pakai emoji"` : ''}
 }`;
 
-    const res = await fetch('http://localhost:11434/api/generate', {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: ollamaModel, prompt, stream: false, options: { temperature: 0.75, num_predict: 1200 } }),
-      signal: AbortSignal.timeout(120000),
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.75, maxOutputTokens: 1500 }
+      }),
+      signal: AbortSignal.timeout(30000),
     });
-    if (!res.ok) throw new Error(`Ollama error ${res.status}: ${await res.text()}`);
-    const data = await res.json();
 
-    // Ekstrak JSON dari response (model kadang menambah teks sebelum/sesudah)
-    const raw: string = data.response || '';
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `Gemini error ${res.status}. Periksa API key kamu.`);
+    }
+
+    const data = await res.json();
+    const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
     const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Model tidak mengembalikan JSON yang valid. Coba model lain atau ulangi.');
+    if (!match) throw new Error('Gemini tidak mengembalikan JSON yang valid. Coba lagi.');
     return JSON.parse(match[0]);
   };
 
@@ -486,18 +491,19 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
         </div>
       </section>`;
 
-    // — Order URL sanitizer (auto-prefix https, support WA number) —
+    // — Order URL builder —
     const orderUrl = (() => {
+      if (formData.orderType === 'wa') {
+        const raw = formData.orderWA.trim();
+        if (!raw) return '#';
+        const digitsOnly = raw.replace(/\D/g, '');
+        const normalized = digitsOnly.startsWith('0') ? `62${digitsOnly.slice(1)}` : digitsOnly;
+        const greeting = ai?.waGreeting || formData.waGreeting.trim() || buildWAGreeting(produk, audiensPendek, tujuan);
+        return `https://wa.me/${normalized}?text=${encodeURIComponent(greeting)}`;
+      }
       const raw = formData.orderLink.trim();
       if (!raw) return '#';
       if (raw.startsWith('http://') || raw.startsWith('https://')) return raw;
-      if (raw.startsWith('wa.me/') || raw.startsWith('whatsapp://')) return `https://${raw}`;
-      // bare phone number → WA link (normalize 08xx → 628xx)
-      const digitsOnly = raw.replace(/\D/g, '');
-      if (digitsOnly.length >= 9) {
-        const normalized = digitsOnly.startsWith('0') ? `62${digitsOnly.slice(1)}` : digitsOnly;
-        return `https://wa.me/${normalized}`;
-      }
       return `https://${raw}`;
     })();
 
@@ -804,14 +810,14 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
 
   const handleGenerate = async () => {
     setIsLoading(true);
-    setOllamaError('');
+    setGeminiError('');
 
-    if (useOllama) {
+    if (useGemini) {
       try {
-        const ai = await generateWithOllama();
-        setAiContent(ai);
+        const result = await generateWithGemini();
+        setAiContent(result);
       } catch (err: any) {
-        setOllamaError(err.message || 'Gagal menghubungi Ollama.');
+        setGeminiError(err.message || 'Gagal menghubungi Gemini API.');
         setIsLoading(false);
         return;
       }
@@ -819,7 +825,6 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
       setIsGenerated(true);
       setActiveTab('pratinjau');
     } else {
-      // template-based (no AI)
       setAiContent(null);
       setTimeout(() => {
         setIsLoading(false);
@@ -953,16 +958,56 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3 mb-6">
-              <div>
-                <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">Harga</label>
-                <input type="text" placeholder="Rp 299.000" className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-md px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition-shadow" value={formData.harga} onChange={(e) => handleInputChange('harga', e.target.value)} />
-              </div>
-              <div>
-                <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">Order Link</label>
-                <input type="text" placeholder="URL Web / WA" className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-md px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition-shadow placeholder-gray-400" value={formData.orderLink} onChange={(e) => handleInputChange('orderLink', e.target.value)} />
+            <div className="mb-4">
+              <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">Harga</label>
+              <input type="text" placeholder="Rp 299.000" className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-md px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition-shadow" value={formData.harga} onChange={(e) => handleInputChange('harga', e.target.value)} />
+            </div>
+
+            {/* ORDER TYPE SELECTOR */}
+            <div className="mb-4">
+              <label className="block text-[11px] font-semibold text-gray-600 mb-2">Tujuan Tombol CTA</label>
+              <div className="flex rounded-lg overflow-hidden border border-gray-200">
+                <button
+                  onClick={() => handleInputChange('orderType', 'wa')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-[12px] font-bold transition-colors ${formData.orderType === 'wa' ? 'bg-green-500 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+                >
+                  <MessageCircle size={13} /> WhatsApp
+                </button>
+                <button
+                  onClick={() => handleInputChange('orderType', 'link')}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-[12px] font-bold transition-colors border-l border-gray-200 ${formData.orderType === 'link' ? 'bg-blue-600 text-white' : 'bg-gray-50 text-gray-500 hover:bg-gray-100'}`}
+                >
+                  <Phone size={13} /> Link / Checkout
+                </button>
               </div>
             </div>
+
+            {formData.orderType === 'wa' ? (
+              <div className="space-y-3 mb-4">
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">Nomor WhatsApp</label>
+                  <input type="text" placeholder="628123456789 atau 08123456789" className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-md px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 transition-shadow placeholder-gray-400" value={formData.orderWA} onChange={(e) => handleInputChange('orderWA', e.target.value)} />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">
+                    Greeting WA <span className="font-normal text-gray-400">(auto dari AI, bisa diedit)</span>
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder={`Halo kak, saya tertarik dengan ${formData.namaProduk || 'produk ini'}...`}
+                    className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-[12px] rounded-md px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-green-500 focus:border-green-500 transition-shadow placeholder-gray-400 resize-none"
+                    value={formData.waGreeting}
+                    onChange={(e) => handleInputChange('waGreeting', e.target.value)}
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">Kosongkan = pesan greeting otomatis dari AI/template saat generate</p>
+                </div>
+              </div>
+            ) : (
+              <div className="mb-4">
+                <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">URL Halaman (Checkout / Sales)</label>
+                <input type="text" placeholder="https://checkout.example.com" className="w-full bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-md px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 transition-shadow placeholder-gray-400" value={formData.orderLink} onChange={(e) => handleInputChange('orderLink', e.target.value)} />
+              </div>
+            )}
 
             <div className="grid grid-cols-3 gap-3">
               {themes.map((theme) => (
@@ -1072,73 +1117,43 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
             </div>
           </section>
 
-          {/* OLLAMA AI SECTION */}
+          {/* GEMINI AI SECTION */}
           <section className="pb-4">
             <div className="flex items-center text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">
               <Bot size={14} className="mr-2" />
-              AI Lokal (Ollama)
+              AI Copywriter (Gemini)
             </div>
 
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
               {/* Toggle row */}
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-[13px] font-bold text-gray-700">Aktifkan Ollama</div>
-                  <div className="text-[10px] text-gray-400 mt-0.5">Generate copy via LLM lokal</div>
+                  <div className="text-[13px] font-bold text-gray-700">Aktifkan Gemini AI</div>
+                  <div className="text-[10px] text-gray-400 mt-0.5">Generate copy via Google Gemini</div>
                 </div>
                 <button
-                  onClick={() => setUseOllama(v => !v)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ${useOllama ? 'bg-blue-600' : 'bg-gray-300'}`}
+                  onClick={() => { setUseGemini(v => !v); setGeminiError(''); setAiContent(null); }}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-200 focus:outline-none ${useGemini ? 'bg-blue-600' : 'bg-gray-300'}`}
                 >
-                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${useOllama ? 'translate-x-6' : 'translate-x-1'}`} />
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${useGemini ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
               </div>
 
-              {useOllama && (
+              {useGemini && (
                 <>
-                  {/* Status row */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-[12px] font-semibold">
-                      {ollamaStatus === 'online' && <><span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /><span className="text-emerald-600">Online</span></>}
-                      {ollamaStatus === 'offline' && <><span className="w-2 h-2 rounded-full bg-red-500" /><span className="text-red-500">Offline</span></>}
-                      {ollamaStatus === 'unknown' && <><span className="w-2 h-2 rounded-full bg-gray-300 animate-pulse" /><span className="text-gray-400">Memeriksa...</span></>}
-                    </div>
-                    <button onClick={checkOllama} className="flex items-center gap-1 text-[11px] font-bold text-gray-400 hover:text-blue-600 transition-colors">
-                      <RefreshCw size={12} /> Refresh
-                    </button>
+                  <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 text-[11px] text-blue-700 leading-relaxed">
+                    Gemini AI aktif — copy LP akan dibuat oleh AI saat kamu klik Generate.
                   </div>
 
-                  {/* Model selector */}
-                  {availableModels.length > 0 ? (
-                    <div>
-                      <label className="block text-[10px] font-semibold text-gray-500 mb-1">Model</label>
-                      <select
-                        value={ollamaModel}
-                        onChange={e => setOllamaModel(e.target.value)}
-                        className="w-full bg-white border border-gray-200 text-gray-700 text-xs rounded-md px-2.5 py-2 focus:outline-none focus:ring-1 focus:ring-blue-600 appearance-none"
-                      >
-                        {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
-                      </select>
-                    </div>
-                  ) : ollamaStatus === 'online' ? (
-                    <div className="text-[11px] text-gray-400">Tidak ada model ditemukan. Pull model dulu: <span className="font-mono text-gray-600">ollama pull llama3.2</span></div>
-                  ) : (
-                    <div className="text-[11px] text-gray-400 flex items-center gap-1.5">
-                      <WifiOff size={11} /> Pastikan Ollama berjalan di <span className="font-mono">localhost:11434</span>
-                    </div>
-                  )}
-
-                  {/* Error message */}
-                  {ollamaError && (
+                  {geminiError && (
                     <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-[11px] text-red-600 font-medium leading-relaxed">
-                      {ollamaError}
+                      {geminiError}
                     </div>
                   )}
 
-                  {/* AI active badge */}
-                  {aiContent && (
+                  {aiContent && !geminiError && (
                     <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 text-[11px] text-emerald-700 font-semibold flex items-center gap-1.5">
-                      <Wifi size={11} /> Copy dihasilkan oleh {ollamaModel}
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" /> Copy dihasilkan oleh Gemini AI
                     </div>
                   )}
                 </>
@@ -1151,9 +1166,9 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
         <div className="p-5 border-t border-gray-100 bg-white shrink-0">
           <button onClick={handleGenerate} disabled={isLoading} className={`w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 px-4 rounded-xl flex items-center justify-center shadow-lg shadow-blue-600/30 transition-all ${isLoading ? 'opacity-80 cursor-not-allowed' : 'active:scale-[0.98]'}`}>
             {isLoading ? (
-              <><svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>{useOllama ? `AI GENERATING (${ollamaModel})...` : 'MERAKIT HALAMAN...'}</>
+              <><svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>{useGemini ? 'GEMINI GENERATING...' : 'MERAKIT HALAMAN...'}</>
             ) : (
-              <><Sparkles size={18} className="mr-2" />{useOllama ? 'GENERATE dengan AI' : 'GENERATE LANDING PAGE'}</>
+              <><Sparkles size={18} className="mr-2" />{useGemini ? 'GENERATE dengan Gemini AI' : 'GENERATE LANDING PAGE'}</>
             )}
           </button>
         </div>
