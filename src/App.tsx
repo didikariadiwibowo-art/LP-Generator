@@ -215,10 +215,6 @@ function buildContextualTesti(produk: string, audiens: string, tujuan: string) {
   ];
 }
 
-// ============================================================
-// GEMINI API KEY — ganti dengan key kamu
-// ============================================================
-const GEMINI_API_KEY = 'AIzaSyC1dlgNsPqwxO-ptCkY8pwLA9BCRoLGHlY';
 
 // ============================================================
 // WA GREETING GENERATOR
@@ -248,6 +244,7 @@ export default function App() {
 
   // — Gemini AI state —
   const [useGemini, setUseGemini] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
   const [aiContent, setAiContent] = useState<Record<string, any> | null>(null);
   const [geminiError, setGeminiError] = useState('');
 
@@ -322,27 +319,39 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
   "waGreeting": "pesan WA pembuka yang natural, friendly, dan relevan dengan produk, max 2 kalimat, boleh pakai emoji"` : ''}
 }`;
 
-    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: 0.75,
-          maxOutputTokens: 1500
-        }
-      }),
-      signal: AbortSignal.timeout(30000),
+    const models = ['gemini-2.0-flash', 'gemini-1.5-flash'];
+    const requestBody = JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.75, maxOutputTokens: 1500 }
     });
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err?.error?.message || `Gemini error ${res.status}. Periksa API key kamu.`);
+    let lastError = '';
+    let raw = '';
+
+    for (const model of models) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${geminiApiKey}`;
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: requestBody,
+        signal: AbortSignal.timeout(30000),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        lastError = err?.error?.message || `Gemini error ${res.status} (${model})`;
+        console.error(`[Gemini] ${model} failed:`, err);
+        continue;
+      }
+
+      const data = await res.json();
+      console.log(`[Gemini] ${model} response:`, data);
+      raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (raw) break;
+      lastError = `${model} tidak mengembalikan respons.`;
     }
 
-    const data = await res.json();
-    const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    if (!raw) throw new Error(lastError || 'Semua model Gemini gagal. Periksa API key kamu.');
 
     // Coba parse langsung, lalu fallback ke ekstrak regex
     try {
@@ -823,6 +832,11 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
     setGeminiError('');
 
     if (useGemini) {
+      if (!geminiApiKey.trim()) {
+        setGeminiError('Masukkan Gemini API key terlebih dahulu.');
+        setIsLoading(false);
+        return;
+      }
       try {
         const result = await generateWithGemini();
         setAiContent(result);
@@ -1151,6 +1165,22 @@ ${isPlayful ? '<div class="playful-top"></div>' : ''}
 
               {useGemini && (
                 <>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-gray-600 mb-1.5">Gemini API Key</label>
+                    <input
+                      type="password"
+                      placeholder="Paste API key kamu di sini..."
+                      value={geminiApiKey}
+                      onChange={e => {
+                        setGeminiApiKey(e.target.value);
+                        localStorage.setItem('gemini_api_key', e.target.value);
+                        setGeminiError('');
+                      }}
+                      className="w-full bg-white border border-gray-200 text-gray-700 text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:ring-1 focus:ring-blue-600 focus:border-blue-600 font-mono"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">Disimpan di browser. Dapatkan key di <span className="font-semibold">aistudio.google.com</span></p>
+                  </div>
+
                   <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2.5 text-[11px] text-blue-700 leading-relaxed">
                     Gemini AI aktif — copy LP akan dibuat oleh AI saat kamu klik Generate.
                   </div>
