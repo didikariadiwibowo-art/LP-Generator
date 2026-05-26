@@ -319,10 +319,10 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
   "waGreeting": "pesan WA pembuka yang natural, friendly, dan relevan dengan produk, max 2 kalimat, boleh pakai emoji"` : ''}
 }`;
 
-    const models = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash'];
     const requestBody = JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.75, maxOutputTokens: 1500, responseMimeType: 'application/json' }
+      generationConfig: { temperature: 0.7, maxOutputTokens: 8192 }
     });
 
     let lastError = '';
@@ -334,7 +334,7 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: requestBody,
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(60000),
       });
 
       if (!res.ok) {
@@ -345,8 +345,15 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
       }
 
       const data = await res.json();
-      console.log(`[Gemini] ${model} response:`, data);
+      const finishReason = data.candidates?.[0]?.finishReason;
       raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      console.log(`[Gemini] ${model} | finishReason: ${finishReason} | raw:`, raw.slice(0, 200));
+
+      if (finishReason === 'MAX_TOKENS') {
+        lastError = `${model}: response terpotong (MAX_TOKENS). Coba lagi.`;
+        raw = '';
+        continue;
+      }
       if (raw) break;
       lastError = `${model} tidak mengembalikan respons.`;
     }
@@ -359,11 +366,15 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
     } catch {
       const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const match = clean.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error(`Gemini tidak mengembalikan JSON yang valid. Coba kurangi deskripsi atau coba lagi.`);
+      if (!match) {
+        console.error('[Gemini] Raw response (no JSON found):', raw.slice(0, 500));
+        throw new Error('Gemini tidak mengembalikan JSON. Buka DevTools > Console untuk lihat detail response.');
+      }
       try {
         return JSON.parse(match[0]);
       } catch {
-        throw new Error('Format JSON dari Gemini tidak valid. Coba lagi.');
+        console.error('[Gemini] Found JSON-like but invalid:', match[0].slice(0, 500));
+        throw new Error('JSON dari Gemini tidak valid (mungkin terpotong). Coba lagi.');
       }
     }
   };
