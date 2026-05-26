@@ -322,7 +322,7 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
     const models = ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'];
     const requestBody = JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.75, maxOutputTokens: 1500 }
+      generationConfig: { temperature: 0.75, maxOutputTokens: 1500, responseMimeType: 'application/json' }
     });
 
     let lastError = '';
@@ -353,14 +353,18 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
 
     if (!raw) throw new Error(lastError || 'Semua model Gemini gagal. Periksa API key kamu.');
 
-    // Coba parse langsung, lalu fallback ke ekstrak regex
+    // Parse JSON, fallback ke ekstrak regex jika ada markdown fence
     try {
       return JSON.parse(raw);
     } catch {
       const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
       const match = clean.match(/\{[\s\S]*\}/);
-      if (!match) throw new Error('Gemini tidak mengembalikan JSON yang valid. Coba lagi.');
-      return JSON.parse(match[0]);
+      if (!match) throw new Error(`Gemini tidak mengembalikan JSON yang valid. Coba kurangi deskripsi atau coba lagi.`);
+      try {
+        return JSON.parse(match[0]);
+      } catch {
+        throw new Error('Format JSON dari Gemini tidak valid. Coba lagi.');
+      }
     }
   };
 
