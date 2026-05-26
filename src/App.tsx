@@ -218,7 +218,7 @@ function buildContextualTesti(produk: string, audiens: string, tujuan: string) {
 // ============================================================
 // GEMINI API KEY — ganti dengan key kamu
 // ============================================================
-const GEMINI_API_KEY = 'AIzaSyCW14lvzYI6_y7WO8eRipXuSuN0QTGOUhg';
+const GEMINI_API_KEY = 'AIzaSyDllfjDsEii4T1zf8ZV9khkPo-raGLg_t0';
 
 // ============================================================
 // WA GREETING GENERATOR
@@ -322,13 +322,16 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
   "waGreeting": "pesan WA pembuka yang natural, friendly, dan relevan dengan produk, max 2 kalimat, boleh pakai emoji"` : ''}
 }`;
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key=${GEMINI_API_KEY}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.75, maxOutputTokens: 1500 }
+        generationConfig: {
+          temperature: 0.75,
+          maxOutputTokens: 1500
+        }
       }),
       signal: AbortSignal.timeout(30000),
     });
@@ -340,9 +343,16 @@ Balas HANYA dengan JSON valid (tidak ada penjelasan, tidak ada markdown, langsun
 
     const data = await res.json();
     const raw: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error('Gemini tidak mengembalikan JSON yang valid. Coba lagi.');
-    return JSON.parse(match[0]);
+
+    // Coba parse langsung, lalu fallback ke ekstrak regex
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const clean = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      const match = clean.match(/\{[\s\S]*\}/);
+      if (!match) throw new Error('Gemini tidak mengembalikan JSON yang valid. Coba lagi.');
+      return JSON.parse(match[0]);
+    }
   };
 
   const handleImageUpload = (e) => {
