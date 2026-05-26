@@ -218,7 +218,7 @@ function buildContextualTesti(produk: string, audiens: string, tujuan: string) {
 // ============================================================
 // GEMINI API KEY — ganti dengan key kamu
 // ============================================================
-const GEMINI_API_KEY = 'AIzaSyDllfjDsEii4T1zf8ZV9khkPo-raGLg_t0';
+const GEMINI_API_KEY = 'AIzaSyC1dlgNsPqwxO-ptCkY8pwLA9BCRoLGHlY';
 
 // ============================================================
 // WA GREETING GENERATOR
